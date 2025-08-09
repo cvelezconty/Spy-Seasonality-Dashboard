@@ -1,26 +1,273 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>SPY Seasonality – Data Loader</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <style>
-    body{background:#111;color:#eee;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;padding:32px}
-    h1{font-size:22px;margin:0 0 12px}
-    .card{background:#1b1b1b;border:1px solid #2a2a2a;border-radius:8px;padding:16px;max-width:900px}
-    code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-    .ok{color:#7bd88f} .err{color:#ff7b7b}
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>SPY Seasonality – Live Heatmap</title>
+<style>
+  :root{
+    --bg:#111; --panel:#1c1c1c; --ink:#eaeaea; --muted:#aaa;
+    --pos:#195d2b; --neg:#7a1a1a; --zero:#2a2a2a; --grid:#2a2a2a;
+    --hi:#8de28f; --lo:#f08484;
+    --brand:#ffc857; --accent:#7db3ff;
+  }
+  html,body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.4 system-ui,Segoe UI,Roboto,Helvetica,Arial;}
+  .wrap{max-width:1280px;margin:26px auto;padding:0 16px;}
+  h1{margin:0 0 12px;font-weight:800;text-align:center}
+  .bar{display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:center;margin:10px 0 18px}
+  .bar label{color:var(--muted);font-size:13px}
+  .btn{background:#2e2e2e;border:1px solid #444;color:#fff;padding:8px 12px;border-radius:6px;cursor:pointer}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .note{color:var(--muted);font-size:12px;text-align:center;margin:6px 0 14px}
+  .grid{width:100%;border-collapse:collapse;table-layout:fixed;background:var(--panel);border:1px solid #333}
+  .grid th,.grid td{border:1px solid var(--grid);padding:8px 10px;text-align:right}
+  .grid th{background:#262626;color:#ddd;font-weight:600}
+  .grid th.sticky{position:sticky;left:0;z-index:2;background:#2b2b2b;text-align:left}
+  .grid td.sticky{position:sticky;left:0;background:#242424;font-weight:600;text-align:left}
+  .cell{display:flex;justify-content:flex-end;gap:8px;align-items:center}
+  .pill{font-variant-numeric:tabular-nums;font-weight:600}
+  .pos{background:linear-gradient(to right, transparent 0, var(--pos) 100%);color:#d6ffd8}
+  .neg{background:linear-gradient(to right, transparent 0, var(--neg) 100%);color:#ffd7d7}
+  .neu{background:#242424;color:#ddd}
+  .lg{padding:6px 8px;border-radius:4px}
+  .legend{display:flex;gap:10px;justify-content:center;color:#bbb;font-size:12px;margin-top:6px}
+  .tag{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid #444;background:#1f1f1f;color:#ccc}
+  .warn{color:#ffbfbf}
+  .ok{color:#b6ffb6}
+</style>
 </head>
 <body>
-  <h1>SPY Seasonality – Data Loader Check</h1>
-
-  <div class="card">
-    <div id="status">Loading VIX &amp; FOMC…</div>
-    <pre id="debug" style="margin-top:12px;white-space:pre-wrap"></pre>
+  <div class="wrap">
+    <h1>SPY Monthly Seasonality Heatmap</h1>
+    <div class="bar">
+      <label>From <input id="from" type="number" min="1900" max="2100" step="1" style="width:86px"></label>
+      <label>To <input id="to" type="number" min="1900" max="2100" step="1" style="width:86px"></label>
+      <label><input id="fomcOnly" type="checkbox"> FOMC months only</label>
+      <label><input id="excludeFomc" type="checkbox"> Exclude FOMC months</label>
+      <label><input id="vixGate" type="checkbox"> Show only months with VIX &gt; median</label>
+      <button id="apply" class="btn">Update View</button>
+    </div>
+    <div id="status" class="note"></div>
+    <table id="tbl" class="grid"></table>
+    <div class="legend">
+      <span class="tag">Green = positive avg %</span>
+      <span class="tag">Red = negative avg %</span>
+      <span class="tag">Values shown are averages within the chosen filters</span>
+    </div>
   </div>
 
-  <!-- The loader below will fill the status/debug boxes -->
-  <script src="js/dataLoader.js"></script>
+<script>
+/* ----------------------- ZeroA: CONFIG ----------------------- */
+const BASE = "https://raw.githubusercontent.com/cvelezconty/Spy-Seasonality-Dashboard/main/";
+const PATHS = {
+  season: "seasonality.csv",                 // Year,1..12 (percent as decimal: 0.0123)
+  vix:     "VIX_History.csv",                // DATE,CLOSE (YYYY-MM-DD, number)
+  fomc:    "MODIFIED%20FOMC_Seasonality_Pivot.csv" // needs a Date column YYYY-MM-DD
+};
+/* ------------------------------------------------------------- */
+
+const $ = (s)=>document.querySelector(s);
+const $$ = (s)=>document.querySelectorAll(s);
+const state = {
+  season: [], // [{Year,1..12}]
+  vixByYM: new Set(), // "YYYY-MM" where VIX > median
+  fomcMonths: new Set(), // "YYYY-MM" where any FOMC date exists
+  years: []
+};
+
+function csvParse(text){
+  const lines = text.trim().split(/\r?\n/);
+  const headers = lines.shift().split(",").map(h=>h.trim());
+  return lines.map(l=>{
+    const cells = l.split(","); const obj={};
+    headers.forEach((h,i)=>obj[h]= (cells[i]??"").trim());
+    return obj;
+  });
+}
+
+async function loadCSV(url){
+  const r = await fetch(url,{cache:"no-store"});
+  if(!r.ok) throw new Error(`${url} -> ${r.status}`);
+  return csvParse(await r.text());
+}
+
+function toFloat(v){const x=parseFloat(v);return Number.isFinite(x)?x:NaN;}
+
+function monthKey(dt){return dt.slice(0,7);} // "YYYY-MM"
+
+/* ---- build helpers ---- */
+function computeVixHighMonths(vixRows){
+  const points = vixRows.map(r=>({m: monthKey(r.DATE), v: toFloat(r.CLOSE)})).filter(x=>x.m && Number.isFinite(x.v));
+  const byM = new Map();
+  points.forEach(p=>{
+    const arr = byM.get(p.m) || [];
+    arr.push(p.v); byM.set(p.m, arr);
+  });
+  const all = points.map(p=>p.v).sort((a,b)=>a-b);
+  if(!all.length) return new Set();
+  const median = all[Math.floor(all.length/2)];
+  const hi = new Set();
+  byM.forEach((arr,m)=>{
+    const avg = arr.reduce((a,b)=>a+b,0)/arr.length;
+    if(avg > median) hi.add(m);
+  });
+  return hi;
+}
+
+function buildFomcMonthSet(fomcRows){
+  const s = new Set();
+  fomcRows.forEach(r=>{
+    const d = (r.Date||r.DATE||"").slice(0,10);
+    if(/^\d{4}-\d{2}-\d{2}$/.test(d)) s.add(monthKey(d));
+  });
+  return s;
+}
+
+function loadSeasonality(rows){
+  // Expect: Year,1..12
+  const out=[];
+  rows.forEach(r=>{
+    const y = parseInt(r.Year||r.YEAR);
+    if(!Number.isFinite(y)) return;
+    const rec={Year:y};
+    for(let m=1;m<=12;m++){
+      const v = toFloat(r[String(m)]);
+      rec[m]=Number.isFinite(v)?v:NaN;
+    }
+    out.push(rec);
+  });
+  out.sort((a,b)=>a.Year-b.Year);
+  return out;
+}
+
+function yearsRange(){
+  if(!state.season.length) return [2000,2000];
+  const ys = state.season.map(r=>r.Year);
+  return [Math.min(...ys), Math.max(...ys)];
+}
+
+/* ---- rendering ---- */
+function colorClass(val){
+  if(!Number.isFinite(val) || Math.abs(val)<1e-8) return "neu";
+  return val>0 ? "pos" : "neg";
+}
+function fmtPct(x){
+  if(!Number.isFinite(x)) return "";
+  return (x*100).toFixed(2)+"%";
+}
+
+function applyFilters(){
+  const y0 = parseInt($("#from").value);
+  const y1 = parseInt($("#to").value);
+  const useFomc = $("#fomcOnly").checked;
+  const exclFomc = $("#excludeFomc").checked;
+  const vixGate = $("#vixGate").checked;
+
+  // guard: both FOMC toggles cannot be on at the same time
+  if(useFomc && exclFomc){
+    $("#status").innerHTML = `<span class="warn">Choose either “FOMC months only” or “Exclude FOMC months”, not both.</span>`;
+    return;
+  }
+
+  // Build a Year x Month table of filtered averages.
+  const rows = [];
+  for(const r of state.season){
+    if(r.Year<y0 || r.Year>y1) continue;
+    const o={Year:r.Year};
+    for(let m=1;m<=12;m++){
+      let v = r[m];
+      if(!Number.isFinite(v)){ o[m]=NaN; continue;}
+      // If filters depend on monthly keys, we need YYYY-MM membership.
+      const mm = String(m).padStart(2,"0");
+      const ym = `${r.Year}-${mm}`;
+
+      if(useFomc && !state.fomcMonths.has(ym)) { o[m]=NaN; continue; }
+      if(exclFomc && state.fomcMonths.has(ym)) { o[m]=NaN; continue; }
+      if(vixGate && !state.vixByYM.has(ym)) { o[m]=NaN; continue; }
+
+      o[m]=v;
+    }
+    rows.push(o);
+  }
+  renderTable(rows);
+}
+
+function renderTable(data){
+  const tbl = $("#tbl");
+  tbl.innerHTML = "";
+
+  // header
+  const thead = document.createElement("thead");
+  const hr = document.createElement("tr");
+  const th0 = document.createElement("th"); th0.className="sticky"; th0.textContent="Year/Month";
+  hr.appendChild(th0);
+  for(let m=1;m<=12;m++){ const th=document.createElement("th"); th.textContent=String(m); hr.appendChild(th); }
+  thead.appendChild(hr);
+  tbl.appendChild(thead);
+
+  // body
+  const tbody = document.createElement("tbody");
+  data.forEach(r=>{
+    const tr = document.createElement("tr");
+    const s = document.createElement("td"); s.className="sticky"; s.textContent=r.Year; tr.appendChild(s);
+    for(let m=1;m<=12;m++){
+      const td=document.createElement("td");
+      const v=r[m];
+      const div=document.createElement("div"); div.className="cell";
+      const pill=document.createElement("span"); pill.className=`pill lg ${colorClass(v)}`; pill.textContent=fmtPct(v);
+      div.appendChild(pill); td.appendChild(div); tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  });
+  tbl.appendChild(tbody);
+}
+
+/* ---- boot ---- */
+(async function boot(){
+  $("#status").innerHTML = "Loading…";
+  // pre-fill year inputs
+  const [minY,maxY] = [2000, 2100];
+  $("#from").value = new Date().getFullYear()-6;
+  $("#to").value = new Date().getFullYear();
+
+  let warn = [];
+  try{
+    // seasonality
+    const season = await loadCSV(BASE+PATHS.season).catch(()=>[]);
+    state.season = loadSeasonality(season);
+    if(!state.season.length){
+      $("#status").innerHTML = `<span class="warn">seasonality.csv not found or empty. Export your Excel pivot to CSV and name it <b>seasonality.csv</b> in the repo root.</span>`;
+      return;
+    }
+    const yr = yearsRange();
+    $("#from").min = yr[0]; $("#from").max = yr[1];
+    $("#to").min   = yr[0]; $("#to").max   = yr[1];
+    $("#from").value = yr[0]; $("#to").value = yr[1];
+
+    // VIX (optional)
+    try{
+      const vix = await loadCSV(BASE+PATHS.vix);
+      state.vixByYM = computeVixHighMonths(vix);
+    }catch(_){ warn.push("VIX_History.csv not found (VIX filter disabled)."); $("#vixGate").disabled=true; }
+
+    // FOMC (optional)
+    try{
+      const fomc = await loadCSV(BASE+PATHS.fomc);
+      state.fomcMonths = buildFomcMonthSet(fomc);
+    }catch(_){ warn.push("FOMC file not found (FOMC filters disabled)."); $("#fomcOnly").disabled=true; $("#excludeFomc").disabled=true; }
+
+    $("#status").innerHTML = warn.length
+      ? `<span class="ok">Base heatmap ready.</span> <span class="warn">${warn.join(" ")}</span>`
+      : `<span class="ok">Heatmap ready.</span>`;
+
+    applyFilters();
+  }catch(err){
+    console.error(err);
+    $("#status").innerHTML = `<span class="warn">Load error: ${err.message}</span>`;
+  }
+
+  $("#apply").addEventListener("click", applyFilters);
+})();
+</script>
 </body>
 </html>
