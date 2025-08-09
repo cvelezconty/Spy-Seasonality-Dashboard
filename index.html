@@ -1,45 +1,26 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>SPY Seasonality Dashboard</title>
-  <link rel="stylesheet" href="style.css">
+  <meta charset="utf-8" />
+  <title>SPY Seasonality – Data Loader</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body{background:#111;color:#eee;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;padding:32px}
+    h1{font-size:22px;margin:0 0 12px}
+    .card{background:#1b1b1b;border:1px solid #2a2a2a;border-radius:8px;padding:16px;max-width:900px}
+    code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    .ok{color:#7bd88f} .err{color:#ff7b7b}
+  </style>
 </head>
 <body>
-  <header class="wrap">
-    <h1>SPY Seasonality Dashboard</h1>
-    <p class="sub">Data: SPY Weekly/Monthly Seasonality + FOMC/VIX flags</p>
-  </header>
+  <h1>SPY Seasonality – Data Loader Check</h1>
 
-  <main class="wrap">
-    <section class="panel">
-      <h2>Downloads</h2>
-      <ul class="downloads">
-        <li><a href="../data/Final_Seasonality_ChangePct_Pivot.xlsx">Final_Seasonality_ChangePct_Pivot.xlsx</a></li>
-        <li><a href="../data/MODIFIED_FOMC_Seasonality_Pivot.csv">MODIFIED_FOMC_Seasonality_Pivot.csv</a></li>
-        <li><a href="../data/VIX_History.csv">VIX_History.csv</a></li>
-      </ul>
-      <p class="note">If a link 404s, confirm the file exists in <code>/data</code> on your repo and the name matches exactly (case-sensitive).</p>
-    </section>
+  <div class="card">
+    <div id="status">Loading VIX &amp; FOMC…</div>
+    <pre id="debug" style="margin-top:12px;white-space:pre-wrap"></pre>
+  </div>
 
-    <section class="panel">
-      <h2>How to Use</h2>
-      <ol>
-        <li>Download the files above.</li>
-        <li>Open <strong>Final_Seasonality_ChangePct_Pivot.xlsx</strong> and refresh data or paste your latest daily rows.</li>
-        <li>Use the Pivot filters for <em>FOMC</em> and <em>VIX</em> to view seasonality windows.</li>
-      </ol>
-    </section>
-
-    <section class="panel">
-      <h2>Status</h2>
-      <p>This is a simple static page served by GitHub Pages. No passwords, no backend.</p>
-    </section>
-  </main>
-
-  <footer class="wrap small">
-    <p>© 2025 cvelezconty — Code: MIT, Data: CC BY‑NC 4.0. Not investment advice.</p>
-  </footer>
+  <!-- The loader below will fill the status/debug boxes -->
+  <script src="js/dataLoader.js"></script>
 </body>
 </html>
