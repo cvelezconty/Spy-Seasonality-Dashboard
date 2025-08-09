@@ -17,7 +17,7 @@ jobs:
         run: |
           set -e
           # 👉 REPLACE this URL with the **direct CSV download** URL from Cboe you use
-          VIX_URL="<<PASTE_CBOE_VIX_CSV_URL_HERE>>"
+          VIX_URL="<<https://www.cboe.com/tradable_products/vix/vix_historical_data/>>"
           curl -fL "$VIX_URL" -o VIX_History.csv
 
       - name: Commit updated CSV
