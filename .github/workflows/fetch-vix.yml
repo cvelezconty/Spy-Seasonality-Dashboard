@@ -1,0 +1,27 @@
+name: Refresh VIX CSV
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    # runs at 08:10 UTC Monday–Friday (tweak if you want)
+    - cron: "10 8 * * 1-5"
+
+jobs:
+  fetch-vix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Download latest VIX CSV from Cboe
+        run: |
+          set -e
+          # 👉 REPLACE this URL with the **direct CSV download** URL from Cboe you use
+          VIX_URL="<<PASTE_CBOE_VIX_CSV_URL_HERE>>"
+          curl -fL "$VIX_URL" -o VIX_History.csv
+
+      - name: Commit updated CSV
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore(data): refresh VIX_History.csv"
+          file_pattern: VIX_History.csv
