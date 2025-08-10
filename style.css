@@ -13,3 +13,5 @@ header h1 { margin:0 0 6px; font-weight:700; letter-spacing:.3px; }
 .note { color:var(--muted); font-size:14px; margin-top:10px; }
 .small { color:var(--muted); font-size:14px; }
 code { background:#0f1218; padding:2px 6px; border-radius:6px; }
+table td, table th { color: #000; }
+.badge { color: #000; background: #eee; border-radius: 10px; padding: 2px 6px; margin-left: 6px; font-size: 11px; }
