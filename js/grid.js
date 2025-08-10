@@ -1,18 +1,17 @@
 /* js/grid.js
    Grid + heatmap renderer for monthly/weekly seasonality.
-   ZeroA: It will try to load CSVs from the repo; if missing, it falls back to a tiny demo.
+   Loads CSVs from the repo; if missing, falls back to a tiny demo.
 */
 
 const BASE =
   "https://raw.githubusercontent.com/cvelezconty/Spy-Seasonality-Dashboard/main/";
 
 const PATHS = {
-  monthly: "seasonality_monthly.csv", // Year,1,2,...,12  (values are percent change, e.g., 0.0123 for +1.23%)
+  monthly: "seasonality_monthly.csv", // Year,1,2,...,12  (values = percent change, e.g., 0.0123 = +1.23%)
   weekly:  "seasonality_weekly.csv"   // Year,10,11,...,27
 };
 
-// Very small demo, used only if CSVs are not present.
-// Values are *percent* (0.012 = 1.2%), like our real files.
+// Tiny demo data if CSVs aren’t present (values are percent, 0.012 = 1.2%)
 const DEMO = {
   monthly: [
     { Year: 2023, 1: -0.022, 2: 0.014, 3: 0.006, 4: 0.018, 5: -0.007, 6: 0.004, 7: 0.010, 8: -0.012, 9: -0.018, 10: 0.011, 11: 0.023, 12: 0.006 },
@@ -25,7 +24,8 @@ const DEMO = {
   ]
 };
 
-// Utility: fetch CSV -> array of objects
+// ---- helpers --------------------------------------------------------------
+
 async function fetchCSV(url) {
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -37,24 +37,25 @@ async function fetchCSV(url) {
     const obj = {};
     headers.forEach((h, i) => {
       const raw = (cells[i] ?? "").trim();
-      // parse as float when possible
       obj[h] = h === "Year" ? Number(raw) : (raw === "" ? null : Number(raw));
     });
     return obj;
   });
 }
 
-// Color: red (neg) -> white -> green (pos)
+// red (neg) <-> white <-> green (pos) + force black text for readability
 function heatColor(v) {
-  if (v == null || isNaN(v)) return "#181818";
-  // clamp at +-5% for color scale
+  // Always return both background and text color
+  if (v == null || isNaN(v)) return { bg: "#ffffff", text: "#000000" };
+
+  // clamp at ±5% for color scale
   const x = Math.max(-0.05, Math.min(0.05, v));
   if (x >= 0) {
     const g = Math.round(255 * (x / 0.05));
-    return `rgb(${255-g},255,${255-g})`; // white -> green
+    return { bg: `rgb(${255 - g}, 255, ${255 - g})`, text: "#000000" }; // greenish
   } else {
     const r = Math.round(255 * (-x / 0.05));
-    return `rgb(255,${255-r},${255-r})`; // white -> red
+    return { bg: `rgb(255, ${255 - r}, ${255 - r})`, text: "#000000" }; // reddish
   }
 }
 
@@ -66,25 +67,30 @@ function pct(v) {
 function buildColumns(mode) {
   if (mode === "weekly") {
     const wk = [];
-    for (let i = 10; i <= 27; i++) wk.push(String(i));
+    for (let i = 10; i <= 27; i++) wk.push(String(i)); // week numbers across the top
     return wk;
   }
-  // monthly
-  return Array.from({ length: 12 }, (_, i) => String(i + 1));
+  return Array.from({ length: 12 }, (_, i) => String(i + 1)); // 1..12
 }
+
+// ---- render ---------------------------------------------------------------
 
 function renderTable(rows, mode, opts) {
   const container = document.getElementById("grid");
   container.innerHTML = "";
+
   const cols = buildColumns(mode);
 
-  // filter by year range (if provided)
+  // filter by year range
   const fromY = Number(opts.fromYear) || -Infinity;
   const toY = Number(opts.toYear) || Infinity;
-  const data = rows.filter(r => r.Year >= fromY && r.Year <= toY).sort((a,b)=>a.Year-b.Year);
+  const data = rows
+    .filter(r => r.Year >= fromY && r.Year <= toY)
+    .sort((a, b) => a.Year - b.Year);
 
-  // build table
+  // table + header
   const table = document.createElement("table");
+
   const thead = document.createElement("thead");
   const htr = document.createElement("tr");
 
@@ -95,20 +101,25 @@ function renderTable(rows, mode, opts) {
 
   cols.forEach(c => {
     const th = document.createElement("th");
-    th.textContent = c;
+    th.textContent = c;                    // shows 10..27 in weekly mode
+    th.style.color = "#000000";            // header text black
     htr.appendChild(th);
   });
+
   thead.appendChild(htr);
   table.appendChild(thead);
 
+  // body
   const tbody = document.createElement("tbody");
+
   data.forEach(r => {
     const tr = document.createElement("tr");
 
     const y = document.createElement("td");
     y.className = "sticky-left";
+    y.style.color = "#000000";
     y.textContent = r.Year;
-    // small badges (visual only for now)
+
     if (opts.showVix) {
       const b = document.createElement("span");
       b.className = "badge";
@@ -126,7 +137,9 @@ function renderTable(rows, mode, opts) {
     cols.forEach(c => {
       const td = document.createElement("td");
       const v = r[c];
-      td.style.background = heatColor(v);
+      const { bg, text } = heatColor(v);
+      td.style.backgroundColor = bg;
+      td.style.color = text;               // <-- always black text
       td.textContent = pct(v);
       tr.appendChild(td);
     });
@@ -138,24 +151,26 @@ function renderTable(rows, mode, opts) {
   container.appendChild(table);
 }
 
+// ---- boot -----------------------------------------------------------------
+
 async function loadData(mode) {
   const url = BASE + PATHS[mode];
   try {
     const arr = await fetchCSV(url);
     return arr;
   } catch (e) {
-    console.warn(`Missing ${PATHS[mode]} — using small demo`, e);
+    console.warn(`Missing ${PATHS[mode]} — using demo`, e);
     return DEMO[mode];
   }
 }
 
 async function boot() {
-  const modeSel = document.getElementById("mode");
+  const modeSel  = document.getElementById("mode");
   const fromYear = document.getElementById("fromYear");
-  const toYear = document.getElementById("toYear");
-  const showVix = document.getElementById("showVix");
+  const toYear   = document.getElementById("toYear");
+  const showVix  = document.getElementById("showVix");
   const showFomc = document.getElementById("showFomc");
-  const apply = document.getElementById("apply");
+  const apply    = document.getElementById("apply");
 
   async function refresh() {
     const mode = modeSel.value;
