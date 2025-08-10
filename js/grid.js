@@ -1,16 +1,11 @@
 /* js/grid.js
-   Grid + heatmap renderer for monthly/weekly seasonality.
-
-   - SPY: uses two prepared CSVs in the repo root:
-       seasonality_monthly.csv  (Year,1..12 values = decimal pct, e.g. 0.0123)
-       seasonality_weekly.csv   (Year,10..27 values = decimal pct)
-   - VIX / EPU: read a daily CSV and compute Monthly/Weekly close-to-close % change
-     on the fly, then pivot to the same shape as SPY.
+   Seasonality grid renderer.
+   - SPY uses prebuilt seasonality CSVs in the repo root
+   - VIX / EPU read daily CSVs and compute monthly/weekly % change
+   - VIX / FOMC checkboxes just add badges beside Year (for SPY view or any dataset)
 */
-
 const BASE = "https://raw.githubusercontent.com/cvelezconty/Spy-Seasonality-Dashboard/main/";
 
-// file names in the repo root
 const PATHS = {
   spyMonthly: "seasonality_monthly.csv",
   spyWeekly : "seasonality_weekly.csv",
@@ -18,333 +13,241 @@ const PATHS = {
   epuDaily  : "USEPUINDXD.csv"
 };
 
-// ------------------------------------------------------
-// helpers: fetch & CSV parsing
-// ------------------------------------------------------
-async function fetchText(url) {
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+/* ---------- CSV helpers ---------- */
+async function fetchText(url){
+  const res = await fetch(url,{cache:"no-store"});
+  if(!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
   return res.text();
 }
-
-async function fetchCSV(url) {
+async function fetchCSV(url){
   const text = await fetchText(url);
   const lines = text.trim().split(/\r?\n/);
-  const headers = lines.shift().split(",").map(h => h.trim());
-  const rows = lines.map(line => {
+  const headers = lines.shift().split(",").map(h=>h.trim());
+  const rows = lines.map(line=>{
     const cells = line.split(",");
-    const obj = {};
-    headers.forEach((h, i) => (obj[h] = (cells[i] ?? "").trim()));
-    return obj;
-  });
-  return { headers, rows };
-}
-
-// find a DATE column and a numeric VALUE column
-function detectDateAndValue({ headers, rows }) {
-  const dateCol = headers.find(h => /date/i.test(h)) || headers[0];
-  const valueCol =
-    headers.find(h => {
-      if (/date/i.test(h)) return false;
-      let n = 0;
-      for (let i = 0; i < Math.min(40, rows.length); i++) {
-        const v = Number(rows[i][h]);
-        if (!Number.isNaN(v)) n++;
-      }
-      return n >= 5;
-    }) || headers[1];
-  return { dateCol, valueCol };
-}
-
-// ------------------------------------------------------
-// color helpers
-// ------------------------------------------------------
-function textColorFromBG(bg) {
-  // bg like "rgb(r,g,b)"
-  const m = bg.match(/\d+/g);
-  if (!m) return "#eee";
-  const [r, g, b] = m.map(Number);
-  // relative luminance, tweak threshold so dark cells show white
-  const Y = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-  return Y > 0.62 ? "#000" : "#fff";
-}
-
-// heat color with mapping -range..+range
-function heatColor(v, range) {
-  if (v == null || isNaN(v)) return "rgb(24,24,24)";
-  const R = Math.max(1e-6, range);
-  const x = Math.max(-R, Math.min(R, v)) / R; // -1..+1
-  if (x >= 0) {
-    // white -> green
-    const g = Math.round(255 * x);
-    return `rgb(${255 - g},255,${255 - g})`;
-  } else {
-    // white -> red
-    const r = Math.round(255 * -x);
-    return `rgb(255,${255 - r},${255 - r})`;
-  }
-}
-const pct = v => (v == null || isNaN(v) ? "" : (v * 100).toFixed(2) + "%");
-
-// ------------------------------------------------------
-// date grouping from daily series
-// ------------------------------------------------------
-function isoWeek(date) {
-  // ISO week-of-year (Mon-based)
-  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-  const dayNum = (d.getUTCDay() + 6) % 7; // Mon=0..Sun=6
-  d.setUTCDate(d.getUTCDate() - dayNum + 3);
-  const firstThursday = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
-  return 1 + Math.round((d - firstThursday) / 604800000);
-}
-
-function groupDailyToMonthly(daily) {
-  // end-of-month close
-  const map = new Map(); // key "YYYY-MM"
-  for (const { date, value } of daily) {
-    const y = date.getUTCFullYear();
-    const m = date.getUTCMonth() + 1;
-    const key = `${y}-${String(m).padStart(2, "0")}`;
-    if (!map.has(key)) map.set(key, []);
-    map.get(key).push({ date, value });
-  }
-  const out = [];
-  for (const [key, arr] of [...map.entries()].sort()) {
-    arr.sort((a, b) => a.date - b.date);
-    const y = Number(key.slice(0, 4));
-    const m = Number(key.slice(5, 7));
-    const close = arr[arr.length - 1].value;
-    out.push({ y, m, close });
-  }
-  const rows = [];
-  for (let i = 0; i < out.length; i++) {
-    const { y, m, close } = out[i];
-    const prev = out[i - 1];
-    const chg = prev ? close / prev.close - 1 : null;
-    rows.push({ Year: y, Month: m, Pct: chg });
-  }
-  return rows;
-}
-
-function groupDailyToWeekly(daily) {
-  // end-of-week (Friday or last day present) close
-  const map = new Map(); // key "YYYY-WW"
-  for (const { date, value } of daily) {
-    const y = date.getUTCFullYear();
-    const w = isoWeek(date);
-    const key = `${y}-${String(w).padStart(2, "0")}`;
-    if (!map.has(key)) map.set(key, []);
-    map.get(key).push({ date, value });
-  }
-  const out = [];
-  for (const [key, arr] of [...map.entries()].sort()) {
-    arr.sort((a, b) => a.date - b.date);
-    const [ys, ws] = key.split("-");
-    const y = Number(ys), w = Number(ws);
-    const close = arr[arr.length - 1].value;
-    out.push({ y, w, close });
-  }
-  const rows = [];
-  for (let i = 0; i < out.length; i++) {
-    const { y, w, close } = out[i];
-    const prev = out[i - 1];
-    const chg = prev ? close / prev.close - 1 : null;
-    rows.push({ Year: y, Week: w, Pct: chg });
-  }
-  return rows;
-}
-
-function pivotMonthly(rows) {
-  const byY = new Map();
-  for (const r of rows) {
-    if (!byY.has(r.Year)) byY.set(r.Year, { Year: r.Year });
-    byY.get(r.Year)[String(r.Month)] = r.Pct;
-  }
-  return [...byY.values()].sort((a, b) => a.Year - b.Year);
-}
-
-function pivotWeekly(rows) {
-  const byY = new Map();
-  for (const r of rows) {
-    if (!byY.has(r.Year)) byY.set(r.Year, { Year: r.Year });
-    if (r.Week >= 10 && r.Week <= 27) {
-      byY.get(r.Year)[String(r.Week)] = r.Pct;
-    }
-  }
-  return [...byY.values()].sort((a, b) => a.Year - b.Year);
-}
-
-// ------------------------------------------------------
-// data loading
-// ------------------------------------------------------
-async function loadSPY(mode) {
-  const file = mode === "monthly" ? PATHS.spyMonthly : PATHS.spyWeekly;
-  const { rows } = await fetchCSV(BASE + file);
-  return rows.map(r => {
-    const o = { Year: Number(r.Year) };
-    for (const k of Object.keys(r)) {
-      if (k !== "Year") o[k] = r[k] === "" ? null : Number(r[k]);
-    }
+    const o={}; headers.forEach((h,i)=>o[h]=(cells[i]??"").trim());
     return o;
   });
+  return {headers,rows};
 }
 
-async function loadDailyThenAggregate(pathDaily, mode) {
-  const { headers, rows } = await fetchCSV(BASE + pathDaily);
-  const { dateCol, valueCol } = detectDateAndValue({ headers, rows });
-  const daily = rows
-    .map(r => {
-      const d = new Date(r[dateCol]);
-      const v = Number(r[valueCol]);
-      return (isFinite(d) && !Number.isNaN(v)) ? { date: d, value: v } : null;
-    })
-    .filter(Boolean)
-    .sort((a, b) => a.date - b.date);
-
-  if (mode === "monthly") return pivotMonthly(groupDailyToMonthly(daily));
-  return pivotWeekly(groupDailyToWeekly(daily));
-}
-
-async function loadData(dataset, mode) {
-  if (dataset === "spy") return loadSPY(mode);
-  if (dataset === "vix") return loadDailyThenAggregate(PATHS.vixDaily, mode);
-  if (dataset === "epu") return loadDailyThenAggregate(PATHS.epuDaily, mode);
-  throw new Error("Unknown dataset: " + dataset);
-}
-
-// ------------------------------------------------------
-// rendering
-// ------------------------------------------------------
-function buildColumns(mode) {
-  if (mode === "weekly") {
-    const wk = [];
-    for (let i = 10; i <= 27; i++) wk.push(String(i));
-    return wk;
-  }
-  return Array.from({ length: 12 }, (_, i) => String(i + 1));
-}
-
-// compute scaling range
-function computeRange(rows, cols, scaleMode) {
-  if (scaleMode === "fixed") return 0.05; // ±5%
-
-  if (scaleMode === "auto-table") {
-    let maxAbs = 0;
-    for (const r of rows) {
-      for (const c of cols) {
-        const v = r[c];
-        if (v != null && !isNaN(v)) maxAbs = Math.max(maxAbs, Math.abs(v));
-      }
+/* auto-detect date/value columns for arbitrary daily CSVs */
+function detectDateAndValue({headers,rows}){
+  const dateCol = headers.find(h=>/date/i.test(h)) || headers[0];
+  const valueCol = headers.find(h=>{
+    if (/date/i.test(h)) return false;
+    let cnt=0; for(let i=0;i<Math.min(40,rows.length);i++){
+      if(!Number.isNaN(Number(rows[i][h]))) cnt++;
     }
-    return Math.max(maxAbs, 0.01); // avoid tiny scales
-  }
-
-  // auto-column -> return an object map col->range
-  const per = {};
-  for (const c of cols) {
-    let maxAbs = 0;
-    for (const r of rows) {
-      const v = r[c];
-      if (v != null && !isNaN(v)) maxAbs = Math.max(maxAbs, Math.abs(v));
-    }
-    per[c] = Math.max(maxAbs, 0.01);
-  }
-  return per;
+    return cnt>=5;
+  }) || headers[1];
+  return {dateCol,valueCol};
 }
 
-function renderTable(rows, mode, opts) {
-  const root = document.getElementById("grid");
-  root.innerHTML = "";
+/* ---------- color helpers ---------- */
+function heatColor(v,scaleMode,range){
+  if(v==null || isNaN(v)) return "#19191f";
+  if(scaleMode==="auto" && range){
+    const [vmin,vmax] = range; // map vmin->red, 0->white, vmax->green
+    const clamp = (x,a,b)=>Math.max(a,Math.min(b,x));
+    const x = clamp((v-0)/(v>=0 ? (vmax||0.0001) : (Math.abs(vmin)||0.0001)), -1, 1);
+    if(x>=0){ const g=Math.round(255*x); return `rgb(${255-g},255,${255-g})`; }
+    const r=Math.round(255*Math.abs(x));  return `rgb(255,${255-r},${255-r})`;
+  }
+  // fixed ±5%
+  const x=Math.max(-0.05,Math.min(0.05,v));
+  if(x>=0){ const g=Math.round(255*(x/0.05)); return `rgb(${255-g},255,${255-g})`; }
+  const r=Math.round(255*(-x/0.05));        return `rgb(255,${255-r},${255-r})`;
+}
+function pct(v){ return (v==null||isNaN(v)) ? "" : (v*100).toFixed(2)+"%"; }
+function textColor(bg){
+  const m = bg.match(/\d+/g); if(!m) return "#eaeaf0";
+  const [r,g,b] = m.map(Number);
+  const Y = (0.2126*r+0.7152*g+0.0722*b)/255;
+  return Y>0.60 ? "#111" : "#fff";
+}
 
-  const cols = buildColumns(mode);
-  const fromY = Number(opts.fromYear) || -Infinity;
-  const toY   = Number(opts.toYear)   ||  Infinity;
+/* ---------- build headers ---------- */
+function buildColumns(mode){
+  if(mode==="weekly"){ const wk=[]; for(let i=10;i<=27;i++) wk.push(String(i)); return wk; }
+  return Array.from({length:12},(_,i)=>String(i+1));
+}
 
-  const data = rows.filter(r => r.Year >= fromY && r.Year <= toY).sort((a, b) => a.Year - b.Year);
-  const scale = computeRange(data, cols, opts.scale);
-
-  const table = document.createElement("table");
-
-  const thead = document.createElement("thead");
-  const htr = document.createElement("tr");
-  const th0 = document.createElement("th");
-  th0.className = "sticky-left";
-  th0.textContent = "Year/Period";
-  htr.appendChild(th0);
-  cols.forEach(c => {
-    const th = document.createElement("th");
-    th.textContent = c;
-    htr.appendChild(th);
+/* ---------- aggregate daily to monthly/weekly % ---------- */
+function groupByMonth(daily){
+  const byKey=new Map(); // YYYY-MM -> array
+  daily.forEach(({date,value})=>{
+    const y=date.getUTCFullYear(), m=date.getUTCMonth()+1;
+    const key=`${y}-${String(m).padStart(2,"0")}`;
+    if(!byKey.has(key)) byKey.set(key,[]);
+    byKey.get(key).push({date,value});
   });
-  thead.appendChild(htr);
-  table.appendChild(thead);
+  const eom = [...byKey.entries()].sort().map(([k,arr])=>{
+    arr.sort((a,b)=>a.date-b.date);
+    const y=Number(k.slice(0,4)), m=Number(k.slice(5,7));
+    return {y,m,close:arr[arr.length-1].value};
+  });
+  const out=[]; for(let i=0;i<eom.length;i++){
+    const {y,m,close}=eom[i], prev=eom[i-1];
+    out.push({Year:y,Month:m,Pct:(prev? close/prev.close-1 : null)});
+  }
+  return out;
+}
+function isoWeek(date){
+  const d=new Date(Date.UTC(date.getUTCFullYear(),date.getUTCMonth(),date.getUTCDate()));
+  const day=(d.getUTCDay()+6)%7; d.setUTCDate(d.getUTCDate()-day+3);
+  const firstThu=new Date(Date.UTC(d.getUTCFullYear(),0,4));
+  const week=1+Math.round((d-firstThu)/(7*24*3600*1000));
+  return {y:d.getUTCFullYear(),w:week};
+}
+function groupByWeek(daily){
+  const byKey=new Map();
+  daily.forEach(({date,value})=>{
+    const {y,w}=isoWeek(date); const key=`${y}-${String(w).padStart(2,"0")}`;
+    if(!byKey.has(key)) byKey.set(key,[]); byKey.get(key).push({date,value});
+  });
+  const eow=[...byKey.entries()].sort().map(([k,arr])=>{
+    arr.sort((a,b)=>a.date-b.date);
+    const [ys,ws]=k.split("-"); return {y:Number(ys),w:Number(ws),close:arr[arr.length-1].value};
+  });
+  const out=[]; for(let i=0;i<eow.length;i++){
+    const {y,w,close}=eow[i], prev=eow[i-1];
+    out.push({Year:y,Week:w,Pct:(prev? close/prev.close-1 : null)});
+  }
+  return out;
+}
+function pivotMonthly(rows){
+  const map=new Map();
+  rows.forEach(r=>{ if(!map.has(r.Year)) map.set(r.Year,{Year:r.Year}); map.get(r.Year)[String(r.Month)]=r.Pct; });
+  return [...map.values()].sort((a,b)=>a.Year-b.Year);
+}
+function pivotWeekly(rows){
+  const map=new Map();
+  rows.forEach(r=>{
+    if(!map.has(r.Year)) map.set(r.Year,{Year:r.Year});
+    if(r.Week>=10 && r.Week<=27) map.get(r.Year)[String(r.Week)]=r.Pct;
+  });
+  return [...map.values()].sort((a,b)=>a.Year-b.Year);
+}
 
-  const tbody = document.createElement("tbody");
-  data.forEach(r => {
-    const tr = document.createElement("tr");
+/* ---------- loaders ---------- */
+async function loadSPY(mode){
+  const file = (mode==="monthly") ? PATHS.spyMonthly : PATHS.spyWeekly;
+  const {rows} = await fetchCSV(BASE+file);
+  return rows.map(r=>{
+    const o={Year:Number(r.Year)}; Object.keys(r).forEach(k=>{
+      if(k!=="Year") o[k]=(r[k]===""? null : Number(r[k]));
+    }); return o;
+  });
+}
+async function loadDailyThenAggregate(pathDaily,mode){
+  const {headers,rows}=await fetchCSV(BASE+pathDaily);
+  const {dateCol,valueCol}=detectDateAndValue({headers,rows});
+  const daily = rows.map(r=>{
+    const d=new Date(r[dateCol]); const v=Number(r[valueCol]);
+    return (isFinite(d) && !Number.isNaN(v)) ? {date:d,value:v} : null;
+  }).filter(Boolean).sort((a,b)=>a.date-b.date);
+  if(mode==="monthly") return pivotMonthly(groupByMonth(daily));
+  return pivotWeekly(groupByWeek(daily));
+}
+async function loadData(dataset,mode){
+  if(dataset==="spy") return loadSPY(mode);
+  if(dataset==="vix") return loadDailyThenAggregate(PATHS.vixDaily,mode);
+  if(dataset==="epu") return loadDailyThenAggregate(PATHS.epuDaily,mode);
+  throw new Error("Unknown dataset "+dataset);
+}
 
-    const y = document.createElement("td");
-    y.className = "sticky-left";
-    const wrap = document.createElement("div");
-    wrap.className = "yearcell";
-    wrap.textContent = r.Year;
-    y.appendChild(wrap);
+/* ---------- render ---------- */
+function extent(rows,cols){
+  let mn=Infinity,mx=-Infinity;
+  rows.forEach(r=>cols.forEach(c=>{
+    const v=r[c]; if(v!=null && !isNaN(v)){ if(v<mn) mn=v; if(v>mx) mx=v; }
+  }));
+  if(mn===Infinity) return null;
+  return [mn,mx];
+}
+function buildColumns(mode){
+  if(mode==="weekly"){ const wk=[]; for(let i=10;i<=27;i++) wk.push(String(i)); return wk; }
+  return Array.from({length:12},(_,i)=>String(i+1));
+}
+function renderTable(rows,mode,opts){
+  const container=document.getElementById("grid");
+  container.innerHTML="";
+  const cols=buildColumns(mode);
+
+  const fromY=Number(opts.fromYear)||-Infinity;
+  const toY  =Number(opts.toYear)|| Infinity;
+  const data = rows.filter(r=>r.Year>=fromY && r.Year<=toY).sort((a,b)=>a.Year-b.Year);
+
+  const rng = (opts.scale==="auto") ? extent(data,cols) : null;
+
+  const table=document.createElement("table");
+  const thead=document.createElement("thead");
+  const htr=document.createElement("tr");
+
+  const th0=document.createElement("th"); th0.className="sticky-left"; th0.textContent="Year/Period";
+  htr.appendChild(th0);
+  cols.forEach(c=>{const th=document.createElement("th"); th.textContent=c; htr.appendChild(th);});
+  thead.appendChild(htr); table.appendChild(thead);
+
+  const tbody=document.createElement("tbody");
+  data.forEach(r=>{
+    const tr=document.createElement("tr");
+    const y=document.createElement("td"); y.className="sticky-left"; y.textContent=r.Year;
+
+    if(opts.showVix){ const b=document.createElement("span"); b.className="badge"; b.textContent="VIX";  y.appendChild(b); }
+    if(opts.showFomc){const b=document.createElement("span"); b.className="badge"; b.textContent="FOMC"; y.appendChild(b); }
+
     tr.appendChild(y);
 
-    cols.forEach(c => {
-      const td = document.createElement("td");
-      const v = r[c];
-      const rng = typeof scale === "number" ? scale : (scale[c] ?? 0.05);
-      const bg = heatColor(v, rng);
-      td.style.background = bg;
-      td.style.color = textColorFromBG(bg);
-      td.textContent = pct(v);
+    cols.forEach(c=>{
+      const td=document.createElement("td");
+      const v=r[c];
+      const bg=heatColor(v,opts.scale,rng);
+      td.style.background=bg;
+      td.style.color=textColor(bg);
+      td.textContent=pct(v);
       tr.appendChild(td);
     });
-
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
+  container.appendChild(table);
 
-  root.appendChild(table);
+  // tiny status line (what got loaded)
+  const info=document.createElement("div");
+  info.className="note";
+  info.textContent = `Loaded ${data.length} year rows • ${opts.dataset.toUpperCase()} • ${opts.mode} • scale: ${opts.scale}`;
+  container.parentElement.insertBefore(info,container);
 }
 
-// ------------------------------------------------------
-// boot
-// ------------------------------------------------------
-async function boot() {
+/* ---------- boot ---------- */
+async function boot(){
   const dataset = document.getElementById("dataset");
   const modeSel = document.getElementById("mode");
   const scaleSel= document.getElementById("scale");
   const from    = document.getElementById("fromYear");
   const to      = document.getElementById("toYear");
+  const showVix = document.getElementById("showVix");
+  const showFmc = document.getElementById("showFomc");
   const apply   = document.getElementById("apply");
-  const status  = document.getElementById("status");
 
-  async function refresh() {
-    try {
-      status.textContent = "Loading…";
-      const ds   = dataset.value;
-      const mode = modeSel.value;
-      const rows = await loadData(ds, mode);
-
-      renderTable(rows, mode, {
-        fromYear: from.value,
-        toYear  : to.value,
-        scale   : scaleSel.value
-      });
-
-      status.textContent =
-        `Loaded ${rows.length} year rows • ${ds.toUpperCase()} • ${mode} • scale: ${scaleSel.value}`;
-    } catch (e) {
-      console.error(e);
-      status.textContent = e.message || "Error loading data.";
-      document.getElementById("grid").innerHTML = "";
-    }
+  async function refresh(){
+    const ds   = dataset.value;
+    const mode = modeSel.value;
+    const rows = await loadData(ds,mode);
+    renderTable(rows,mode,{
+      dataset: ds, mode,
+      fromYear: from.value, toYear: to.value,
+      scale: scaleSel.value,
+      showVix: showVix.checked, showFomc: showFmc.checked
+    });
   }
-
-  apply.addEventListener("click", refresh);
+  apply.addEventListener("click",refresh);
+  // sensible defaults
+  if(!from.value) from.value = "2010";
+  if(!to.value)   to.value   = new Date().getFullYear();
   await refresh();
 }
 
-boot().catch(err => console.error("Grid error:", err));
+boot().catch(err=>console.error("Grid error:",err));
