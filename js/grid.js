@@ -66,12 +66,11 @@ function heatColor(v) {
 }
 function pct(v) { return (v == null || isNaN(v)) ? "" : (v * 100).toFixed(2) + "%"; }
 function textColor(bg) {
-  // simple luminance check
   const m = bg.match(/\d+/g);
   if (!m) return "#eee";
   const [r,g,b] = m.map(Number);
   const Y = (0.2126*r + 0.7152*g + 0.0722*b)/255;
-  return Y > 0.55 ? "#000" : "#eee";
+  return Y > 0.62 ? "#000" : "#eee"; // slightly more aggressive for black text
 }
 
 function buildColumns(mode) {
