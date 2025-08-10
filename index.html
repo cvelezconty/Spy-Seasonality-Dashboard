@@ -9,19 +9,24 @@
   body{background:#111;color:#eee;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,'Helvetica Neue',Arial}
   h1{font-size:28px;margin:24px 0 8px;text-align:center}
   .sub{font-size:14px;opacity:.9;text-align:center;margin-bottom:18px}
+
   .controls{display:flex;gap:10px;justify-content:center;align-items:center;flex-wrap:wrap;margin-bottom:14px}
   .controls label{font-size:13px;opacity:.9}
   .controls input,.controls select,.controls button{padding:6px 8px;border:1px solid #444;background:#1c1c1c;color:#eee;border-radius:4px}
   .controls button{cursor:pointer}
+
   .note{font-size:12px;opacity:.75;text-align:center;margin:8px 0 16px}
+
   .table-wrap{overflow:auto;margin:0 auto;max-width:1400px;border:1px solid #333;border-radius:6px}
   table{border-collapse:collapse;width:100%;min-width:960px}
   th, td{border:1px solid #2b2b2b;padding:8px 10px;text-align:right}
-  th{background:#1a1a1a;position:sticky;top:0;z-index:1}
+  th{background:#1a1a1a;position:sticky;top:0;z-index:1;color:#eee}
   th.sticky-left, td.sticky-left{position:sticky;left:0;background:#1a1a1a;z-index:2;text-align:left}
   td.sticky-left{background:#141414}
-  .n{color:#aaa}
-  .badge{display:inline-block;font-size:11px;padding:2px 6px;border:1px solid #444;border-radius:10px;margin-left:6px}
+
+  /* readability inside heatmap cells */
+  table td{color:#000}            /* numbers in cells are black */
+  .badge{display:inline-block;font-size:11px;padding:2px 6px;border:1px solid #444;border-radius:10px;margin-left:6px;color:#000;background:#eee}
 </style>
 </head>
 <body>
@@ -33,8 +38,20 @@
       <select id="mode">
         <option value="monthly" selected>Monthly %</option>
         <option value="weekly">Weekly %</option>
+        <option value="implied">Implied (VIX)</option> <!-- NEW -->
       </select>
     </label>
+
+    <!-- NEW: only visible when Mode = Implied (VIX) -->
+    <label id="impliedPeriodWrap" style="display:none;">
+      Period
+      <select id="impliedPeriod">
+        <option value="daily">Daily</option>
+        <option value="weekly">Weekly</option>
+        <option value="monthly">Monthly</option>
+      </select>
+    </label>
+
     <label>From <input type="number" id="fromYear" min="1990" max="2100" placeholder="2010" /></label>
     <label>To <input type="number" id="toYear" min="1990" max="2100" placeholder="2025" /></label>
 
@@ -44,14 +61,23 @@
     <button id="apply">Update View</button>
   </div>
 
-  <div class="note">Files expected:
-    <code>seasonality_monthly.csv</code> (Year,1,2,…,12) and
-    <code>seasonality_weekly.csv</code> (Year,10,11,…,27) in the repo root.
-    If not found, a small demo dataset is used so you can verify the UI.
+  <div class="note">
+    Files expected:
+    <code>seasonality_monthly.csv</code> (Year,1–12) and
+    <code>seasonality_weekly.csv</code> (Year,10–27) for returns modes;
+    and <code>VIX_History.csv</code> (Date,Close) for <b>Implied (VIX)</b>.
   </div>
 
   <div class="table-wrap" id="grid"></div>
 
   <script src="js/grid.js"></script>
+  <script>
+    // tiny helper to show/hide period select
+    const modeSel = document.getElementById('mode');
+    const wrap = document.getElementById('impliedPeriodWrap');
+    function toggle() { wrap.style.display = modeSel.value === 'implied' ? '' : 'none'; }
+    modeSel.addEventListener('change', toggle);
+    toggle();
+  </script>
 </body>
 </html>
