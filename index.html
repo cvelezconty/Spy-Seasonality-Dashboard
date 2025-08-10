@@ -4,41 +4,45 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>SPY Seasonality Grid</title>
-<link rel="stylesheet" href="style.css" />
+
+<!-- Minimal built‑in styling so it looks good even without style.css -->
 <style>
-  :root { --bg:#111; --fg:#eee; --line:#2b2b2b; --head:#1a1a1a; --headL:#141414; }
-  body{background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,'Helvetica Neue',Arial;margin:0}
-  h1{font-size:28px;margin:20px 0 6px;text-align:center}
-  .sub{font-size:14px;opacity:.9;text-align:center;margin-bottom:10px}
-  .controls{display:flex;gap:10px;justify-content:center;align-items:center;flex-wrap:wrap;margin:12px 8px}
-  .controls label{font-size:13px;opacity:.95}
-  .controls select,.controls input,.controls button{
-    padding:6px 8px;border:1px solid #444;background:#1c1c1c;color:var(--fg);border-radius:4px
+  :root{
+    --bg:#0f0f10; --panel:#161617; --ink:#e9e9ec; --ink-dim:#b8b8bf;
+    --grid:#2a2a2e; --grid-soft:#1f1f23; --accent:#5aa8ff;
   }
-  .controls button{cursor:pointer}
-  .note,.err{font-size:12px;text-align:center;margin:6px 0 10px}
-  .note{opacity:.8}
-  .err{color:#ffd2d2}
-  .table-wrap{overflow:auto;margin:0 auto 24px;max-width:1400px;border:1px solid #333;border-radius:6px}
-  table{border-collapse:collapse;width:100%;min-width:960px}
-  th,td{border:1px solid var(--line);padding:8px 10px;text-align:right}
-  th{background:var(--head);position:sticky;top:0;z-index:1}
-  th.sticky-left,td.sticky-left{position:sticky;left:0;background:var(--head);z-index:2;text-align:left}
-  td.sticky-left{background:var(--headL)}
-  .badge{display:inline-block;font-size:11px;padding:2px 6px;border:1px solid #444;border-radius:10px;margin-left:6px}
-  .footer-note{font-size:12px;text-align:center;opacity:.75;margin:6px 0 24px}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,'Helvetica Neue',Arial}
+  h1{margin:22px 0 8px;text-align:center;font-weight:800;letter-spacing:.2px}
+  .sub{margin:0 0 18px;text-align:center;color:var(--ink-dim);font-size:13px}
+  .bar{display:flex;gap:10px;justify-content:center;align-items:center;flex-wrap:wrap;margin:8px auto 10px;padding:10px;max-width:1200px}
+  .bar label{font-size:13px;color:var(--ink-dim)}
+  select,input,button{padding:7px 10px;border-radius:6px;border:1px solid var(--grid);background:var(--panel);color:var(--ink)}
+  button{cursor:pointer;background:#1f66ff;border-color:#1f66ff}
+  button:hover{filter:brightness(1.05)}
+
+  .status{max-width:1200px;margin:0 auto 8px;text-align:center;color:var(--ink-dim);font-size:12px}
+  .table-wrap{max-width:1400px;margin:4px auto 40px;overflow:auto;border:1px solid var(--grid);border-radius:8px;background:var(--panel)}
+  table{border-collapse:collapse;width:100%;min-width:900px}
+  thead th{position:sticky;top:0;background:#1b1b1f;z-index:1}
+  th,td{border:1px solid var(--grid-soft);padding:8px 9px;text-align:right;font-variant-numeric:tabular-nums}
+  .sticky-left{position:sticky;left:0;background:#1b1b1f;text-align:left;z-index:2}
+  .yearcell{display:flex;align-items:center;gap:8px}
+  .badge{font-size:10px;border:1px solid var(--grid);padding:1px 6px;border-radius:999px;color:var(--ink-dim)}
+  .footer-note{max-width:1200px;margin:6px auto 30px;color:var(--ink-dim);font-size:12px;text-align:center}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
 </style>
 </head>
 <body>
   <h1>SPY Seasonality Grid</h1>
-  <div class="sub">Heatmap table with red/green coloring. Data loads from CSVs in this repo.</div>
+  <p class="sub">Heatmap table with red/green coloring. Data loads from CSVs in this repo.</p>
 
-  <div class="controls">
+  <div class="bar" id="controls">
     <label>Dataset
       <select id="dataset">
         <option value="spy" selected>SPY (prebuilt CSVs)</option>
-        <option value="vix">VIX (daily CSV → aggregate)</option>
-        <option value="epu">EPU / FRED (daily CSV → aggregate)</option>
+        <option value="vix">VIX (daily CSV)</option>
+        <option value="epu">EPU / FRED (daily CSV)</option>
       </select>
     </label>
 
@@ -52,23 +56,24 @@
     <label>Scale
       <select id="scale">
         <option value="fixed" selected>Fixed ±5%</option>
-        <option value="auto">Auto (min/max of view)</option>
+        <option value="auto-table">Auto (by table)</option>
+        <option value="auto-column">Auto (by column)</option>
       </select>
     </label>
 
-    <label>From <input type="number" id="fromYear" min="1900" max="2100" placeholder="2010" /></label>
-    <label>To <input type="number" id="toYear" min="1900" max="2100" placeholder="2025" /></label>
+    <label>From <input type="number" id="fromYear" min="1990" max="2100" value="2010" /></label>
+    <label>To <input type="number"   id="toYear"   min="1990" max="2100" value="2025" /></label>
 
     <button id="apply">Update View</button>
   </div>
 
-  <div class="note" id="status"></div>
-  <div class="err" id="error" style="display:none;"></div>
+  <div class="status" id="status">Loaded…</div>
 
-  <div class="table-wrap" id="grid"></div>
+  <div class="table-wrap"><div id="grid"></div></div>
 
   <div class="footer-note">
-    SPY reads <code>seasonality_monthly.csv</code> / <code>seasonality_weekly.csv</code>. VIX reads <code>VIX_History.csv</code>. EPU reads <code>USEPUINDXD.csv</code>.
+    SPY reads <code>seasonality_monthly.csv</code> / <code>seasonality_weekly.csv</code>.
+    VIX reads <code>VIX_History.csv</code>. EPU reads <code>USEPUINDXD.csv</code>.
   </div>
 
   <script src="js/grid.js"></script>
